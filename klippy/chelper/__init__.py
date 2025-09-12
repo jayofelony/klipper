@@ -17,16 +17,16 @@ COMPILE_ARGS = ("-Wall -g -O2 -shared -fPIC"
                 " -o %s %s")
 SSE_FLAGS = "-mfpmath=sse -msse2"
 SOURCE_FILES = [
-    'pyhelper.c', 'serialqueue.c', 'stepcompress.c', 'itersolve.c', 'trapq.c',
-    'pollreactor.c', 'msgblock.c', 'trdispatch.c',
+    'pyhelper.c', 'serialqueue.c', 'stepcompress.c', 'steppersync.c',
+    'itersolve.c', 'trapq.c', 'pollreactor.c', 'msgblock.c', 'trdispatch.c',
     'kin_cartesian.c', 'kin_corexy.c', 'kin_corexz.c', 'kin_delta.c',
     'kin_deltesian.c', 'kin_polar.c', 'kin_rotary_delta.c', 'kin_winch.c',
-    'kin_extruder.c', 'kin_shaper.c', 'kin_idex.c',
+    'kin_extruder.c', 'kin_shaper.c', 'kin_idex.c', 'kin_generic.c'
 ]
 DEST_LIB = "c_helper.so"
 OTHER_FILES = [
-    'list.h', 'serialqueue.h', 'stepcompress.h', 'itersolve.h', 'pyhelper.h',
-    'trapq.h', 'pollreactor.h', 'msgblock.h'
+    'list.h', 'serialqueue.h', 'stepcompress.h', 'steppersync.h',
+    'itersolve.h', 'pyhelper.h', 'trapq.h', 'pollreactor.h', 'msgblock.h'
 ]
 
 defs_stepcompress = """
@@ -36,7 +36,7 @@ defs_stepcompress = """
         int step_count, interval, add;
     };
 
-    struct stepcompress *stepcompress_alloc(uint32_t oid);
+    struct stepcompress *stepcompress_alloc(uint32_t oid, char name[16]);
     void stepcompress_fill(struct stepcompress *sc, uint32_t max_error
         , int32_t queue_step_msgtag, int32_t set_next_step_dir_msgtag);
     void stepcompress_set_invert_sdir(struct stepcompress *sc
@@ -54,30 +54,39 @@ defs_stepcompress = """
     int stepcompress_extract_old(struct stepcompress *sc
         , struct pull_history_steps *p, int max
         , uint64_t start_clock, uint64_t end_clock);
+    void stepcompress_set_stepper_kinematics(struct stepcompress *sc
+        , struct stepper_kinematics *sk);
+    struct stepper_kinematics *stepcompress_get_stepper_kinematics(
+        struct stepcompress *sc);
+"""
 
+defs_steppersync = """
     struct steppersync *steppersync_alloc(struct serialqueue *sq
         , struct stepcompress **sc_list, int sc_num, int move_num);
     void steppersync_free(struct steppersync *ss);
     void steppersync_set_time(struct steppersync *ss
         , double time_offset, double mcu_freq);
-    int steppersync_flush(struct steppersync *ss, uint64_t move_clock
-        , uint64_t clear_history_clock);
+    void steppersync_history_expire(struct steppersync *ss, uint64_t end_clock);
+    void steppersync_start_gen_steps(struct steppersync *ss
+        , double gen_steps_time, uint64_t flush_clock);
+    int32_t steppersync_finalize_gen_steps(struct steppersync *ss
+        , uint64_t flush_clock);
 """
 
 defs_itersolve = """
-    int32_t itersolve_generate_steps(struct stepper_kinematics *sk
-        , double flush_time);
     double itersolve_check_active(struct stepper_kinematics *sk
         , double flush_time);
     int32_t itersolve_is_active_axis(struct stepper_kinematics *sk, char axis);
-    void itersolve_set_trapq(struct stepper_kinematics *sk, struct trapq *tq);
-    void itersolve_set_stepcompress(struct stepper_kinematics *sk
-        , struct stepcompress *sc, double step_dist);
+    void itersolve_set_trapq(struct stepper_kinematics *sk, struct trapq *tq
+        , double step_dist);
+    struct trapq *itersolve_get_trapq(struct stepper_kinematics *sk);
     double itersolve_calc_position_from_coord(struct stepper_kinematics *sk
         , double x, double y, double z);
     void itersolve_set_position(struct stepper_kinematics *sk
         , double x, double y, double z);
     double itersolve_get_commanded_pos(struct stepper_kinematics *sk);
+    double itersolve_get_gen_steps_pre_active(struct stepper_kinematics *sk);
+    double itersolve_get_gen_steps_post_active(struct stepper_kinematics *sk);
 """
 
 defs_trapq = """
@@ -105,6 +114,12 @@ defs_trapq = """
 
 defs_kin_cartesian = """
     struct stepper_kinematics *cartesian_stepper_alloc(char axis);
+"""
+defs_kin_generic_cartesian = """
+    struct stepper_kinematics *generic_cartesian_stepper_alloc(double a_x
+        , double a_y, double a_z);
+    void generic_cartesian_stepper_set_coeffs(struct stepper_kinematics *sk
+        , double a_x, double a_y, double a_z);
 """
 
 defs_kin_corexy = """
@@ -142,17 +157,17 @@ defs_kin_winch = """
 
 defs_kin_extruder = """
     struct stepper_kinematics *extruder_stepper_alloc(void);
+    void extruder_stepper_free(struct stepper_kinematics *sk);
     void extruder_set_pressure_advance(struct stepper_kinematics *sk
-        , double pressure_advance, double smooth_time);
+        , double print_time, double pressure_advance, double smooth_time);
 """
 
 defs_kin_shaper = """
-    double input_shaper_get_step_generation_window(
-        struct stepper_kinematics *sk);
     int input_shaper_set_shaper_params(struct stepper_kinematics *sk, char axis
         , int n, double a[], double t[]);
     int input_shaper_set_sk(struct stepper_kinematics *sk
         , struct stepper_kinematics *orig_sk);
+    void input_shaper_update_sk(struct stepper_kinematics *sk);
     struct stepper_kinematics * input_shaper_alloc(void);
 """
 
@@ -174,7 +189,7 @@ defs_serialqueue = """
     };
 
     struct serialqueue *serialqueue_alloc(int serial_fd, char serial_fd_type
-        , int client_id);
+        , int client_id, char name[16]);
     void serialqueue_exit(struct serialqueue *sq);
     void serialqueue_free(struct serialqueue *sq);
     struct command_queue *serialqueue_alloc_commandqueue(void);
@@ -211,6 +226,7 @@ defs_trdispatch = """
 defs_pyhelper = """
     void set_python_logging_callback(void (*func)(const char *));
     double get_monotonic(void);
+    int set_thread_name(char name[16]);
 """
 
 defs_std = """
@@ -219,10 +235,11 @@ defs_std = """
 
 defs_all = [
     defs_pyhelper, defs_serialqueue, defs_std, defs_stepcompress,
-    defs_itersolve, defs_trapq, defs_trdispatch,
+    defs_steppersync, defs_itersolve, defs_trapq, defs_trdispatch,
     defs_kin_cartesian, defs_kin_corexy, defs_kin_corexz, defs_kin_delta,
     defs_kin_deltesian, defs_kin_polar, defs_kin_rotary_delta, defs_kin_winch,
     defs_kin_extruder, defs_kin_shaper, defs_kin_idex,
+    defs_kin_generic_cartesian,
 ]
 
 # Update filenames to an absolute path
@@ -261,11 +278,33 @@ def do_build_code(cmd):
         logging.error(msg)
         raise Exception(msg)
 
+# Build the main c_helper.so c code library
+def check_build_c_library():
+    srcdir = os.path.dirname(os.path.realpath(__file__))
+    srcfiles = get_abs_files(srcdir, SOURCE_FILES)
+    ofiles = get_abs_files(srcdir, OTHER_FILES)
+    destlib = get_abs_files(srcdir, [DEST_LIB])[0]
+    if not check_build_code(srcfiles+ofiles+[__file__], destlib):
+        # Code already built
+        return destlib
+    # Select command line options
+    if check_gcc_option(SSE_FLAGS):
+        cmd = "%s %s %s" % (GCC_CMD, SSE_FLAGS, COMPILE_ARGS)
+    else:
+        cmd = "%s %s" % (GCC_CMD, COMPILE_ARGS)
+    # Invoke compiler
+    logging.info("Building C code module %s", DEST_LIB)
+    tempdestlib = get_abs_files(srcdir, ["_temp_" + DEST_LIB])[0]
+    do_build_code(cmd % (tempdestlib, ' '.join(srcfiles)))
+    # Rename from temporary file to final file name
+    os.rename(tempdestlib, destlib)
+    return destlib
+
 FFI_main = None
 FFI_lib = None
 pyhelper_logging_callback = None
 
-# Hepler invoked from C errorf() code to log errors
+# Helper invoked from C errorf() code to log errors
 def logging_callback(msg):
     logging.error(FFI_main.string(msg))
 
@@ -273,17 +312,9 @@ def logging_callback(msg):
 def get_ffi():
     global FFI_main, FFI_lib, pyhelper_logging_callback
     if FFI_lib is None:
-        srcdir = os.path.dirname(os.path.realpath(__file__))
-        srcfiles = get_abs_files(srcdir, SOURCE_FILES)
-        ofiles = get_abs_files(srcdir, OTHER_FILES)
-        destlib = get_abs_files(srcdir, [DEST_LIB])[0]
-        if check_build_code(srcfiles+ofiles+[__file__], destlib):
-            if check_gcc_option(SSE_FLAGS):
-                cmd = "%s %s %s" % (GCC_CMD, SSE_FLAGS, COMPILE_ARGS)
-            else:
-                cmd = "%s %s" % (GCC_CMD, COMPILE_ARGS)
-            logging.info("Building C code module %s", DEST_LIB)
-            do_build_code(cmd % (destlib, ' '.join(srcfiles)))
+        # Check if library needs to be built, and build if so
+        destlib = check_build_c_library()
+        # Open library
         FFI_main = cffi.FFI()
         for d in defs_all:
             FFI_main.cdef(d)

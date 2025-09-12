@@ -17,6 +17,7 @@ communication with the Klipper developers.
 ## Installation and Configuration
 
 - [Installation](Installation.md): Guide to installing Klipper.
+  - [Octoprint](OctoPrint.md): Guide to installing Octoprint with Klipper.
 - [Config Reference](Config_Reference.md): Description of config
   parameters.
   - [Rotation Distance](Rotation_Distance.md): Calculating the
@@ -100,3 +101,4 @@ communication with the Klipper developers.
 - [TSL1401CL filament width sensor](TSL1401CL_Filament_Width_Sensor.md)
 - [Hall filament width sensor](Hall_Filament_Width_Sensor.md)
 - [Eddy Current Inductive probe](Eddy_Probe.md)
+- [Load Cells](Load_Cell.md)
